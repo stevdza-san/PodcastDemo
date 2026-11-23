@@ -1,0 +1,19 @@
+<resources>
+    <string name="app_name">PodcastDemo</string>
+    <string name="episode_title">StateStore demo audio</string>
+    <string name="ready">Ready</string>
+    <string name="playing">Playing</string>
+    <string name="paused">Paused</string>
+    <string name="stopped">Stopped</string>
+    <string name="preparing">Preparing…</string>
+    <string name="restoring">Restoring…</string>
+    <string name="play">Play</string>
+    <string name="resume">Resume</string>
+    <string name="pause">Pause</string>
+    <string name="stop">Stop</string>
+    <string name="none">None</string>
+    <string name="last_pause_this_session">Last pause this session · %1$s</string>
+    <string name="saved_position">Saved position %1$s</string>
+    <string name="connection_error">Could not connect to playback. Close and reopen the app.</string>
+    <string name="playback_error">Could not load the episode or restore its position.</string>
+</resources>
