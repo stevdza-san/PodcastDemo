@@ -33,8 +33,11 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.stevdza.podcastdemo.ui.theme.PodcastDemoTheme
 import java.util.Locale
+import org.koin.android.ext.android.inject
 
 class MainActivity : ComponentActivity() {
+    private val podcast: PodcastState by inject()
+    private val checkpoint: CheckpointPersistence by inject()
     private var controller by mutableStateOf<MediaController?>(null)
     private var connectionError by mutableStateOf<String?>(null)
     private var controllerFuture: ListenableFuture<MediaController>? = null
@@ -42,17 +45,16 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        val app = application as PodcastApplication
         setContent {
-            val status by app.podcast.playbackStatus
-            val savedPositionMs by app.podcast.resumePositionMs
-            val lastPausePositionMs = app.podcast.lastPausePositionMs
+            val status by podcast.playbackStatus
+            val savedPositionMs by podcast.resumePositionMs
+            val lastPausePositionMs = podcast.lastPausePositionMs
             PodcastDemoTheme {
                 PodcastScreen(
                     status = status,
                     savedPositionMs = savedPositionMs,
                     lastPausePositionMs = lastPausePositionMs,
-                    restoring = app.hasCheckpointFileAtLaunch && savedPositionMs == null,
+                    restoring = checkpoint.hasCheckpointFileAtLaunch && savedPositionMs == null,
                     connected = controller != null,
                     stopAvailable = controller?.availableSessionCommands?.contains(StopAndResetCommand) == true,
                     connectionError = connectionError,

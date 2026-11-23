@@ -4,12 +4,13 @@ A single-screen Kotlin / Jetpack Compose app in `com.stevdza.podcastdemo`. Play 
 
 ## Source walkthrough
 
-Read the four files in `app/src/main/java/com/stevdza/podcastdemo/` in this order:
+Read the main files in `app/src/main/java/com/stevdza/podcastdemo/` in this order:
 
 1. **PodcastState.kt** — playback status, a persisted resume checkpoint, and a temporary last-pause key. Only the resume key implements `PersistToDataStore<Long?>`. The temporary key uses `autoClearKey` and `shouldClearState` to remove itself when playback becomes `Stopped`.
-2. **PodcastApplication.kt** — creates the process's single StateStore, registers the status and resume keys, and starts one `syncToDataStore` connection to `files/podcast-resume.json`. The temporary key is first registered by `recordPause()`.
-3. **PlaybackService.kt** — owns ExoPlayer and the MediaSession. Waits for an existing checkpoint before preparing the episode at that offset. Both pause controls reach `recordPause()`. The app and notification share the `STOP_AND_RESET` command, which publishes `Stopped`, pauses, and seeks to zero. Natural completion also saves `0L`.
-4. **MainActivity.kt** — launcher entry point. Connects and releases a MediaController with the Activity lifecycle, reads shared state, and sends Play/Pause/Stop commands. The screen never creates a player.
+2. **PodcastApplication.kt** — starts Koin and registers process-wide singletons for `StateStore`, `PodcastState`, and checkpoint persistence. It starts the persistence connection once.
+3. **CheckpointPersistence.kt** — owns `files/podcast-resume.json`, runs `syncToDataStore`, and waits for a saved checkpoint to restore before playback preparation.
+4. **PlaybackService.kt** — injects shared state and checkpoint persistence, and owns ExoPlayer and the MediaSession. Both pause controls reach `savePausePosition()`. The app and notification share the `STOP_AND_RESET` command, which publishes `Stopped`, pauses, and seeks to zero. Natural completion also saves `0L`.
+5. **MainActivity.kt** — injects the same state and checkpoint persistence. It connects and releases a MediaController with the Activity lifecycle, reads shared state, and sends Play/Pause/Stop commands.
 
 `null` means no checkpoint has been saved. On a fresh install there is no checkpoint file. This demo owns one file containing one persisted value, so file existence is its restore guard. An existing file that does not restore a non-null value within 15 seconds causes an error; the player does not silently start from zero. Playback and persistence failures are logged under `PodcastDemo`.
 
@@ -18,12 +19,13 @@ Read the four files in `app/src/main/java/com/stevdza/podcastdemo/` in this orde
 - AppState StateStore and StateStore DataStore: **1.0.0-alpha03**
 - Media3 ExoPlayer and Session: **1.11.1**
 - Kotlin Serialization core: **1.7.3** (built-in nullable Long serializer; no serialization compiler plugin)
+- Koin Android: **4.2.2** for process-wide dependencies and Android entry-point injection
 - Existing AGP **9.5.2**, Gradle **9.6.0**, Compose BOM **2026.02.01**, Activity Compose **1.13.0**
 - Compose compiler plugin updated to **2.4.21** for the current Kotlin toolchain
 - Existing compile/target SDK **37**, min SDK **26** retained
 - Existing Gradle daemon toolchain file requests **JDK 25**
 
-Official references: [StateStore release/API changes](https://developer.android.com/jetpack/androidx/releases/appstate-statestore), [StateStore guide](https://developer.android.com/topic/libraries/architecture/appstate/statestore), [Media3 background playback](https://developer.android.com/media/media3/session/background-playback).
+Official references: [StateStore release/API changes](https://developer.android.com/jetpack/androidx/releases/appstate-statestore), [StateStore guide](https://developer.android.com/topic/libraries/architecture/appstate/statestore), [Media3 background playback](https://developer.android.com/media/media3/session/background-playback), [Koin Android setup](https://insert-koin.io/docs/setup/).
 
 Open this directory in Android Studio, sync, and run the `app` configuration. From a terminal:
 
@@ -74,11 +76,13 @@ Also rehearse app-button pause, rotation during playback, leaving and returning 
 
 For the recording, show `autoClearKey = PlaybackStatusKey` and the `Stopped` predicate in `PodcastState.kt`. The UI reads `lastPausePositionMs` directly during composition: checking `store.keys` avoids recreating a removed entry, and avoids retaining an old `State` reference. In alpha03, the first `setState` must create the temporary entry to install automatic clearing.
 
-Automatic removal applies only to the temporary in-memory key. `stopAndReset()` separately saves `0L` through the existing resume key because removing an entry does not erase its old DataStore value. The service sets `Stopped` before pausing so its internal pause cannot overwrite zero with a new pause checkpoint. No dependency changes are needed for this feature.
+Automatic removal applies only to the temporary in-memory key. `stopAndReset()` separately saves `0L` through the existing resume key because removing an entry does not erase its old DataStore value. The service sets `Stopped` before pausing so its internal pause cannot overwrite zero with a new pause checkpoint.
 
 Notification Stop is a Media3 `CommandButton` bound to the same `STOP_AND_RESET` command. Its media button preference requests the forward slot beside the central Play/Pause control. The app and Media3's notification controller are allowed to run it; Android controls the final notification layout. Stop resets playback and leaves the episode loaded for replay.
 
 ## Verification status
+
+The checks marked **Passed** below were recorded before the Koin refactor. The current changes pass `git diff --check`, but compilation and device behavior still need verification in an environment that permits Gradle's local socket and dependency resolution.
 
 - **Passed:** JVM behavior check using the actual alpha03 desktop artifacts and the app's `PodcastState`: three pause/play/stop cycles, retention while playing, removal and re-registration of the temporary entry, reactive getter observation, and an in-memory zero checkpoint after Stop. This is not a device or disk-persistence test.
 - **Passed:** standalone Kotlin 2.4.21 / Compose compiler check of app and instrumentation sources against real Android/AndroidX classes, including the exact AppState and Media3 binaries. Temporary generated resource identifiers were used for this check; it is not a Gradle/APK build.

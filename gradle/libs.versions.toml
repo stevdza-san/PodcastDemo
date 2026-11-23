@@ -11,6 +11,7 @@ composeBom = "2026.02.01"
 stateStore = "1.0.0-alpha03"
 media3 = "1.11.1"
 serialization = "1.7.3"
+koin = "4.2.2"
 
 [libraries]
 androidx-appstate-statestore = { module = "androidx.appstate.statestore:statestore", version.ref = "stateStore" }
@@ -18,6 +19,7 @@ androidx-appstate-statestore-datastore = { module = "androidx.appstate.statestor
 androidx-media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
 androidx-media3-session = { module = "androidx.media3:media3-session", version.ref = "media3" }
 kotlinx-serialization-core = { module = "org.jetbrains.kotlinx:kotlinx-serialization-core", version.ref = "serialization" }
+koin-android = { module = "io.insert-koin:koin-android", version.ref = "koin" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }

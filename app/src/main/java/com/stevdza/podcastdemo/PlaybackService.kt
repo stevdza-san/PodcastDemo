@@ -5,7 +5,6 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.annotation.OptIn
-import androidx.compose.runtime.snapshotFlow
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -26,11 +25,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.time.Duration.Companion.milliseconds
+import org.koin.android.ext.android.inject
 
 internal val StopAndResetCommand = SessionCommand(
     "com.stevdza.podcastdemo.STOP_AND_RESET",
@@ -39,68 +35,68 @@ internal val StopAndResetCommand = SessionCommand(
 
 class PlaybackService : MediaSessionService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val app get() = application as PodcastApplication
+    private val podcast: PodcastState by inject()
+    private val checkpoint: CheckpointPersistence by inject()
     private lateinit var player: ExoPlayer
     private var session: MediaSession? = null
 
     override fun onCreate() {
         super.onCreate()
-        app.podcast.setPlaybackStatus(PlaybackStatus.Preparing)
-        player = ExoPlayer.Builder(this).build().apply {
-            setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(C.USAGE_MEDIA)
-                    .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
-                    .build(),
-                /* handleAudioFocus = */ true,
-            )
-            setHandleAudioBecomingNoisy(true)
-            addListener(playbackListener)
-        }
-        session = MediaSession.Builder(this, player)
-            .setCallback(sessionCallback)
-            .setSessionActivity(
-                PendingIntent.getActivity(
-                    this, 0, Intent(this, MainActivity::class.java),
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-                )
-            )
-            .build()
+        podcast.setPlaybackStatus(PlaybackStatus.Preparing)
+        player = createPlayer()
+        session = createSession(player)
+        launchEpisodePreparation()
+    }
 
+    private fun createPlayer(): ExoPlayer = ExoPlayer.Builder(this).build().apply {
+        setAudioAttributes(
+            AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
+                .build(),
+            /* handleAudioFocus = */ true,
+        )
+        setHandleAudioBecomingNoisy(true)
+        addListener(playbackListener)
+    }
+
+    private fun createSession(player: ExoPlayer): MediaSession = MediaSession.Builder(this, player)
+        .setCallback(sessionCallback)
+        .setSessionActivity(
+            PendingIntent.getActivity(
+                this, 0, Intent(this, MainActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        )
+        .build()
+
+    private fun launchEpisodePreparation() {
         scope.launch {
             try {
-                // This demo owns one file with one nullable persisted key. Never prepare at
-                // zero while a checkpoint from an earlier process is still being restored.
-                val startPositionMs = if (app.hasCheckpointFileAtLaunch) {
-                    checkNotNull(withTimeoutOrNull(15_000.milliseconds) {
-                        snapshotFlow { app.podcast.resumePositionMs.value }
-                            .filterNotNull().first()
-                    }) { "Checkpoint was not restored within 15 seconds" }
-                } else {
-                    app.podcast.resumePositionMs.value ?: 0L
-                }
-                val episode = MediaItem.Builder()
-                    .setMediaId("demo-episode")
-                    .setUri("android.resource://$packageName/${R.raw.demo_episode}")
-                    .setMediaMetadata(
-                        MediaMetadata.Builder()
-                            .setTitle(getString(R.string.episode_title))
-                            .setArtist(getString(R.string.app_name))
-                            .build()
-                    )
-                    .build()
+                val startPositionMs = checkpoint.positionForPreparation()
                 Log.i("PodcastDemo", "Preparing episode at ${startPositionMs}ms")
-                player.setMediaItem(episode, startPositionMs)
+                player.setMediaItem(createEpisode(), startPositionMs)
                 player.prepare()
                 // The listener publishes Ready once the player has actually prepared.
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 Log.e("PodcastDemo", "Episode preparation / checkpoint restore failed", error)
-                app.podcast.setPlaybackStatus(PlaybackStatus.Error)
+                podcast.setPlaybackStatus(PlaybackStatus.Error)
             }
         }
     }
+
+    private fun createEpisode(): MediaItem = MediaItem.Builder()
+        .setMediaId("demo-episode")
+        .setUri("android.resource://$packageName/${R.raw.demo_episode}")
+        .setMediaMetadata(
+            MediaMetadata.Builder()
+                .setTitle(getString(R.string.episode_title))
+                .setArtist(getString(R.string.app_name))
+                .build()
+        )
+        .build()
 
     private val sessionCallback = object : MediaSession.Callback {
         @OptIn(UnstableApi::class)
@@ -139,35 +135,39 @@ class PlaybackService : MediaSessionService() {
             if (!canReset || customCommand != StopAndResetCommand) {
                 return super.onCustomCommand(session, controller, customCommand, args)
             }
-            // Publish Stopped first so the internal pause cannot save the old position.
-            app.podcast.stopAndReset()
-            session.player.pause()
-            session.player.seekTo(0L)
-            Log.i("PodcastDemo", "Stop: checkpoint reset and player seek to 0ms")
+            stopAndReset(session.player)
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
         }
+    }
+
+    private fun stopAndReset(player: Player) {
+        // Publish Stopped first so the internal pause cannot save the old position.
+        podcast.stopAndReset()
+        player.pause()
+        player.seekTo(0L)
+        Log.i("PodcastDemo", "Stop: checkpoint reset and player seek to 0ms")
     }
 
     private val playbackListener = object : Player.Listener {
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             if (!playWhenReady && player.currentMediaItem != null &&
                 player.playbackState != Player.STATE_ENDED && player.playerError == null &&
-                app.podcast.playbackStatus.value != PlaybackStatus.Stopped
+                podcast.playbackStatus.value != PlaybackStatus.Stopped
             ) {
                 // Both the app button and Android's notification reach this callback.
                 if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) {
                     val positionMs = player.currentPosition
-                    app.podcast.savePausePosition(positionMs)
+                    podcast.savePausePosition(positionMs)
                     Log.i("PodcastDemo", "Pause checkpoint: ${positionMs}ms")
                 } else {
-                    app.podcast.setPlaybackStatus(PlaybackStatus.Paused)
+                    podcast.setPlaybackStatus(PlaybackStatus.Paused)
                 }
             }
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             if (isPlaying) {
-                app.podcast.setPlaybackStatus(PlaybackStatus.Playing)
+                podcast.setPlaybackStatus(PlaybackStatus.Playing)
                 Log.i("PodcastDemo", "Playback started at ${player.currentPosition}ms")
             }
         }
@@ -175,14 +175,14 @@ class PlaybackService : MediaSessionService() {
         override fun onPlaybackStateChanged(playbackState: Int) {
             when (playbackState) {
                 Player.STATE_READY -> {
-                    if (app.podcast.playbackStatus.value == PlaybackStatus.Preparing) {
-                        app.podcast.setPlaybackStatus(PlaybackStatus.Ready)
+                    if (podcast.playbackStatus.value == PlaybackStatus.Preparing) {
+                        podcast.setPlaybackStatus(PlaybackStatus.Ready)
                     }
                 }
                 Player.STATE_ENDED -> {
-                    if (app.podcast.playbackStatus.value != PlaybackStatus.Stopped) {
-                        app.podcast.saveResumePosition(0L)
-                        app.podcast.setPlaybackStatus(PlaybackStatus.Ready)
+                    if (podcast.playbackStatus.value != PlaybackStatus.Stopped) {
+                        podcast.saveResumePosition(0L)
+                        podcast.setPlaybackStatus(PlaybackStatus.Ready)
                         Log.i("PodcastDemo", "Episode ended; checkpoint reset to 0ms")
                     }
                 }
@@ -191,7 +191,7 @@ class PlaybackService : MediaSessionService() {
 
         override fun onPlayerError(error: PlaybackException) {
             Log.e("PodcastDemo", "Playback failed", error)
-            app.podcast.setPlaybackStatus(PlaybackStatus.Error)
+            podcast.setPlaybackStatus(PlaybackStatus.Error)
         }
     }
 
