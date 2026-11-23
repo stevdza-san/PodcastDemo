@@ -6,11 +6,12 @@ A single-screen Kotlin / Jetpack Compose app in `com.stevdza.podcastdemo`. Play 
 
 Read the main files in `app/src/main/java/com/stevdza/podcastdemo/` in this order:
 
-1. **PodcastState.kt** — playback status, a persisted resume checkpoint, and a temporary last-pause key. Only the resume key implements `PersistToDataStore<Long?>`. The temporary key uses `autoClearKey` and `shouldClearState` to remove itself when playback becomes `Stopped`.
+1. **PodcastState.kt** — playback status, a persisted resume checkpoint, and a temporary last-pause key. The service and UI share one `PodcastState`. Its session store holds playback status and the temporary pause key. A dedicated checkpoint store keeps the set of keys observed by `syncToDataStore` stable across Pause and Stop, so auto-clearing a session key cannot restart checkpoint restoration. Only the resume key implements `PersistToDataStore<Long?>`. The temporary key uses `autoClearKey` and `shouldClearState` to remove itself when playback becomes `Stopped`.
 2. **PodcastApplication.kt** — starts Koin and registers process-wide singletons for `StateStore`, `PodcastState`, and checkpoint persistence. It starts the persistence connection once.
 3. **CheckpointPersistence.kt** — owns `files/podcast-resume.json`, runs `syncToDataStore`, and waits for a saved checkpoint to restore before playback preparation.
 4. **PlaybackService.kt** — injects shared state and checkpoint persistence, and owns ExoPlayer and the MediaSession. Both pause controls reach `savePausePosition()`. The app and notification share the `STOP_AND_RESET` command, which publishes `Stopped`, pauses, and seeks to zero. Natural completion also saves `0L`.
-5. **MainActivity.kt** — injects the same state and checkpoint persistence. It connects and releases a MediaController with the Activity lifecycle, reads shared state, and sends Play/Pause/Stop commands.
+5. **MainViewModel.kt** — reads the shared podcast state and checkpoint metadata to build the screen state. It owns the MediaController and sends Play/Pause/Stop commands.
+6. **MainActivity.kt** — gets its ViewModel from Koin, connects it on start, disconnects it on stop, and renders the state with `PodcastScreen`.
 
 `null` means no checkpoint has been saved. On a fresh install there is no checkpoint file. This demo owns one file containing one persisted value, so file existence is its restore guard. An existing file that does not restore a non-null value within 15 seconds causes an error; the player does not silently start from zero. Playback and persistence failures are logged under `PodcastDemo`.
 
@@ -82,13 +83,9 @@ Notification Stop is a Media3 `CommandButton` bound to the same `STOP_AND_RESET`
 
 ## Verification status
 
-The checks marked **Passed** below were recorded before the Koin refactor. The current changes pass `git diff --check`, but compilation and device behavior still need verification in an environment that permits Gradle's local socket and dependency resolution.
+The debug APK and instrumentation APK built successfully. Both `PodcastPersistenceTest` tests passed on the Android emulator.
 
-- **Passed:** JVM behavior check using the actual alpha03 desktop artifacts and the app's `PodcastState`: three pause/play/stop cycles, retention while playing, removal and re-registration of the temporary entry, reactive getter observation, and an in-memory zero checkpoint after Stop. This is not a device or disk-persistence test.
-- **Passed:** standalone Kotlin 2.4.21 / Compose compiler check of app and instrumentation sources against real Android/AndroidX classes, including the exact AppState and Media3 binaries. Temporary generated resource identifiers were used for this check; it is not a Gradle/APK build.
-- **Passed:** Android resource compilation with AAPT2, manifest/XML parsing, string-reference checks, and WAV validation (60 seconds, 22,050 Hz, mono PCM16, non-silent).
-- **Blocked:** debug APK build. The default wrapper could not write its global Gradle lock; a writable temporary Gradle home then failed with `java.net.SocketException: Operation not permitted` before project compilation.
-- **Not run:** emulator/device checks and instrumentation tests. ADB could not start its local server (`could not install smartsocket listener: Operation not permitted`).
+The app-button check saved a nonzero pause position, restored it after a force-stop, and resumed playback there. Tapping Stop then showed **Stopped**, **Saved position 00:00**, **Last pause this session · None**, and **Play**. The checkpoint file contained zero, and the service prepared at 0 ms after another force-stop and relaunch.
 
 `PodcastPersistenceTest` checks repeated pause/stop cycles and actual key removal. Its DataStore test uses three independently created stores: save a nonzero offset, restore it without restoring playback status or the temporary pause, record another pause, Stop, and restore zero. It uses an isolated cache file, never the demo checkpoint. Run it on a connected device with:
 

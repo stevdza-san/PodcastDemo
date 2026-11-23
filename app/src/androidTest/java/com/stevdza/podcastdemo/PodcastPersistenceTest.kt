@@ -25,22 +25,27 @@ import org.junit.runner.RunWith
 class PodcastPersistenceTest {
     @Test
     fun stopRemovesTemporaryEntryAndEachPauseReinstallsAutoClear() = runBlocking(Dispatchers.Main) {
-        val store = StateStore()
-        val podcast = PodcastState(store)
+        val checkpointStore = StateStore()
+        val sessionStore = StateStore()
+        val podcast = PodcastState(checkpointStore, sessionStore)
         assertNull(podcast.lastPausePositionMs)
-        assertEquals(2, store.keys.size) // Reading an absent pause must not register its key.
+        assertEquals(1, sessionStore.keys.size) // Reading an absent pause must not register its key.
 
+        val syncedKeys = checkpointStore.keys.toSet()
+        assertEquals(1, syncedKeys.size)
         repeat(2) { cycle ->
             val position = (cycle + 1) * 12_500L
             podcast.savePausePosition(position)
-            assertEquals(3, store.keys.size)
+            assertEquals(2, sessionStore.keys.size)
+            assertEquals(syncedKeys, checkpointStore.keys)
             podcast.setPlaybackStatus(PlaybackStatus.Playing)
             Snapshot.sendApplyNotifications()
             assertEquals(position, podcast.lastPausePositionMs)
 
             podcast.stopAndReset()
             awaitCondition { podcast.lastPausePositionMs == null }
-            assertEquals("The temporary entry was removed", 2, store.keys.size)
+            assertEquals("The temporary entry was removed", 1, sessionStore.keys.size)
+            assertEquals(syncedKeys, checkpointStore.keys)
             assertEquals(PlaybackStatus.Stopped, podcast.playbackStatus.value)
             assertEquals(0L, podcast.resumePositionMs.value)
         }
@@ -69,9 +74,12 @@ class PodcastPersistenceTest {
                 assertNull(podcast.lastPausePositionMs)
                 podcast.savePausePosition(20_000L)
                 awaitDiskPosition(file, 20_000L)
+                podcast.setPlaybackStatus(PlaybackStatus.Playing)
                 podcast.stopAndReset()
                 awaitCondition { podcast.lastPausePositionMs == null }
                 awaitDiskPosition(file, 0L)
+                assertEquals(PlaybackStatus.Stopped, podcast.playbackStatus.value)
+                assertEquals(0L, podcast.resumePositionMs.value)
             }
 
             withSyncedStore(file) { podcast ->

@@ -1,4 +1,4 @@
-package com.stevdza.podcastdemo
+package com.stevdza.podcastdemo.service
 
 import android.app.PendingIntent
 import android.content.Intent
@@ -20,6 +20,11 @@ import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import com.stevdza.podcastdemo.CheckpointPersistence
+import com.stevdza.podcastdemo.MainActivity
+import com.stevdza.podcastdemo.PlaybackStatus
+import com.stevdza.podcastdemo.PodcastState
+import com.stevdza.podcastdemo.R
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

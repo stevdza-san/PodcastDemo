@@ -26,12 +26,17 @@ private object ResumePositionKey : StateStoreKey<Long?>(defaultValue = null), Pe
     override val serializer: KSerializer<Long?> = Long.serializer().nullable
 }
 
-class PodcastState(private val store: StateStore) {
-    val playbackStatus: State<PlaybackStatus> = store.getState(stateKey = PlaybackStatusKey)
-    val resumePositionMs: State<Long?> = store.getState(stateKey = ResumePositionKey)
+class PodcastState(
+    private val checkpointStore: StateStore,
+    private val sessionStore: StateStore = StateStore(),
+) {
+    // Keep the keys observed by syncToDataStore stable. Adding or auto-clearing a session
+    // key in that store can restart alpha03's restore effect and replay an older disk value.
+    val playbackStatus: State<PlaybackStatus> = sessionStore.getState(stateKey = PlaybackStatusKey)
+    val resumePositionMs: State<Long?> = checkpointStore.getState(stateKey = ResumePositionKey)
     val lastPausePositionMs: Long?
-        get() = if (LastPausePositionKey in store.keys) {
-            store.getState(LastPausePositionKey).value
+        get() = if (LastPausePositionKey in sessionStore.keys) {
+            sessionStore.getState(LastPausePositionKey).value
         } else {
             null
         }
@@ -39,7 +44,7 @@ class PodcastState(private val store: StateStore) {
     fun savePausePosition(positionMs: Long) {
         setPlaybackStatus(PlaybackStatus.Paused)
         val position = positionMs.coerceAtLeast(0L)
-        store.setState(stateKey = LastPausePositionKey, value = position)
+        sessionStore.setState(stateKey = LastPausePositionKey, value = position)
         saveResumePosition(positionMs = position)
     }
 
@@ -50,10 +55,10 @@ class PodcastState(private val store: StateStore) {
     }
 
     fun setPlaybackStatus(status: PlaybackStatus) {
-        store.setState(stateKey = PlaybackStatusKey, value = status)
+        sessionStore.setState(stateKey = PlaybackStatusKey, value = status)
     }
 
     fun saveResumePosition(positionMs: Long) {
-        store.setState(stateKey = ResumePositionKey, value = positionMs.coerceAtLeast(0L))
+        checkpointStore.setState(stateKey = ResumePositionKey, value = positionMs.coerceAtLeast(0L))
     }
 }
