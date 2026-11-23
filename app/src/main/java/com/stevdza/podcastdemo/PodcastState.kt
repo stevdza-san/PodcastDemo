@@ -11,7 +11,7 @@ import kotlinx.serialization.builtins.serializer
 enum class PlaybackStatus { Preparing, Ready, Playing, Paused, Stopped, Error }
 
 // Live player state belongs to this process; it must not be restored as "Playing".
-private object PlaybackStatusKey : StateStoreKey<PlaybackStatus>(PlaybackStatus.Preparing)
+private object PlaybackStatusKey : StateStoreKey<PlaybackStatus>(defaultValue = PlaybackStatus.Preparing)
 
 private object LastPausePositionKey : StateStoreKey<Long?>(
     defaultValue = null,
