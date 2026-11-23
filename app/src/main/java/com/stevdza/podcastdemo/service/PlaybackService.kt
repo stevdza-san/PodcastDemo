@@ -154,6 +154,26 @@ class PlaybackService : MediaSessionService() {
     }
 
     private val playbackListener = object : Player.Listener {
+        @OptIn(UnstableApi::class)
+        override fun onPositionDiscontinuity(
+            oldPosition: Player.PositionInfo,
+            newPosition: Player.PositionInfo,
+            reason: Int,
+        ) {
+            if (reason != Player.DISCONTINUITY_REASON_SEEK || newPosition.mediaItem == null) return
+
+            val positionMs = newPosition.positionMs
+            when (podcast.playbackStatus.value) {
+                PlaybackStatus.Paused -> podcast.savePausePosition(positionMs)
+                PlaybackStatus.Playing, PlaybackStatus.Ready -> podcast.saveResumePosition(positionMs)
+                PlaybackStatus.Stopped -> {
+                    // Stop seeks to zero internally. A later scrub away from zero selects a new pause point.
+                    if (positionMs > 0L) podcast.savePausePosition(positionMs)
+                }
+                PlaybackStatus.Preparing, PlaybackStatus.Error -> Unit
+            }
+        }
+
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             if (!playWhenReady && player.currentMediaItem != null &&
                 player.playbackState != Player.STATE_ENDED && player.playerError == null &&
